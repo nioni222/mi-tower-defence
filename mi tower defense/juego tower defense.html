@@ -1,0 +1,398 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Juego de Tower Defense</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+            background-color: #e0e0e0;
+            color: #333;
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: #fff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+        }
+        .controls {
+            margin: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        .score {
+            font-size: 24px;
+            margin: 10px;
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .cooldown {
+            font-size: 16px;
+            color: #f44336;
+            margin-top: 10px;
+        }
+        .bar {
+            height: 10px;
+            width: 100%;
+            background-color: #ddd;
+            border: 1px solid #000;
+            margin-top: 5px;
+            position: relative;
+        }
+        .bar-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            position: absolute;
+        }
+        #background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+    </style>
+</head>
+<body>
+    <h1>Juego de Tower Defense</h1>
+    <div id="background">
+        <img src="background.jpg" alt="Fondo del Juego" style="width: 100%; height: 100%; object-fit: cover;">
+    </div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div class="score" id="score">Puntuación: 50</div>
+    <div class="controls">
+        <button onclick="selectTower('attack')">Torre de Ataque (10 puntos)</button>
+        <button onclick="selectTower('defense')">Torre Defensiva (5 puntos)</button>
+        <button onclick="selectAbility('heal')">Curar Torres (20 puntos)</button>
+        <button onclick="selectAbility('freeze')">Congelar Enemigos (20 puntos)</button>
+        <button onclick="startGame()">Iniciar Juego</button>
+        <button onclick="pauseGame()">Pausar Juego</button>
+        <button onclick="resumeGame()">Reanudar Juego</button>
+    </div>
+    <div class="cooldown" id="cooldowns"></div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let towers = [];
+        let enemies = [];
+        let interval;
+        let enemySpawnInterval;
+        let selectedTowerType = 'attack'; // Tipo de torre seleccionado por defecto
+        let selectedAbility = null; // Habilidad seleccionada
+        let difficulty = 1; // Dificultad inicial
+        let enemySpeed = 2; // Enemigos más lentos
+        const towerRadius = 30;
+        const defenseTowerSize = 50; // Tamaño de la torre defensiva
+        const enemyRadius = 15;
+        const towerRange = 150; // Aumentar el rango de ataque
+        const attackTowerCost = 10; // Costo de la torre de ataque
+        const defenseTowerCost = 5; // Costo de la torre defensiva
+        const towerMaxHealth = 100; // Vida máxima de una torre de ataque
+        const defenseTowerMaxHealth = 300; // Vida máxima de una torre defensiva
+        const enemyDamage = 20; // Daño que causa un enemigo a una torre
+        const attackSpeed = 0.2; // Aumentar la velocidad de ataque (menor es más rápido)
+        let score = 50; // Puntuación inicial
+        let isPaused = false; // Estado de pausa
+        let healCooldown = 0; // Cooldown de curar torres
+        let freezeCooldown = 0; // Cooldown de congelar enemigos
+        let isFrozen = false; // Estado de congelación de enemigos
+        let freezeEndTime = 0; // Tiempo en que terminará la congelación
+        let baseHealth = 3; // Vida de la base
+        const basePosition = { x: 700, y: canvas.height / 2 }; // Nueva posición de la base
+
+        // Cargar imágenes
+        const attackTowerImg = new Image();
+        attackTowerImg.src = 'attack_tower.png'; // Imagen para la torre de ataque
+        
+        const defenseTowerImg = new Image();
+        defenseTowerImg.src = 'defense_tower.png'; // Imagen para la torre defensiva
+        
+        const enemyImg = new Image();
+        enemyImg.src = 'enemy.png'; // Imagen para los enemigos
+        
+        const baseImg = new Image();
+        baseImg.src = 'base.png'; // Imagen para la base
+        
+        function startGame() {
+            clearInterval(interval);
+            clearInterval(enemySpawnInterval);
+            towers = [];
+            enemies = [];
+            difficulty = 1; // Restablecer la dificultad
+            enemySpeed = 2; // Restablecer la velocidad de los enemigos
+            score = 50; // Restablecer la puntuación
+            baseHealth = 3; // Restablecer la vida de la base
+            updateScore(); // Actualizar la puntuación en pantalla
+            document.removeEventListener('click', placeTower); // Deshabilitar la colocación de torres
+            document.addEventListener('click', placeTower);
+            interval = setInterval(updateGameArea, 1000 / 30);
+            enemySpawnInterval = setInterval(spawnEnemy, 2000); // Enemigos aparecen cada 2 segundos
+            
+            // Incrementar la dificultad cada 10 segundos
+            setInterval(increaseDifficulty, 10000);
+        }
+        
+        function selectTower(type) {
+            selectedTowerType = type;
+            document.removeEventListener('click', placeTower); // Deshabilitar la colocación de torres
+        }
+        
+        function selectAbility(ability) {
+            if (score >= 20) { // Verificar si tienes suficientes puntos para desbloquear una habilidad
+                score -= 20; // Reducir los puntos en el costo de la habilidad
+                updateScore(); // Actualizar la puntuación en pantalla
+                if (ability === 'heal' && healCooldown <= 0) {
+                    selectedAbility = 'heal';
+                    healCooldown = 20; // Cooldown de curar torres
+                } else if (ability === 'freeze' && freezeCooldown <= 0) {
+                    selectedAbility = 'freeze';
+                    freezeCooldown = 15; // Cooldown de congelar enemigos
+                }
+            }
+        }
+        
+        function placeTower(e) {
+            if (!isPaused && selectedTowerType) {
+                if (confirm('¿Estás seguro de que deseas colocar una torre aquí?')) {
+                    const towerCost = selectedTowerType === 'attack' ? attackTowerCost : defenseTowerCost;
+                    if (score >= towerCost) { // Verificar si tienes suficientes puntos
+                        const rect = canvas.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+
+                        // Validar que la torre esté dentro del canvas
+                        if (x >= towerRadius && x <= canvas.width - towerRadius && y >= towerRadius && y <= canvas.height - towerRadius) {
+                            if (selectedTowerType === 'attack') {
+                                towers.push({ x, y, type: 'attack', health: towerMaxHealth });
+                            } else if (selectedTowerType === 'defense') {
+                                towers.push({ x, y, type: 'defense', health: defenseTowerMaxHealth });
+                            }
+                            score -= towerCost; // Reducir los puntos
+                            updateScore(); // Actualizar la puntuación en pantalla
+                            document.addEventListener('click', placeTower); // Volver a habilitar la colocación de torres
+                        } else {
+                            alert('La torre está fuera del área del mapa.');
+                        }
+                    } else {
+                        alert('No tienes suficientes puntos para colocar esta torre.');
+                    }
+                }
+            }
+        }
+        
+        function updateGameArea() {
+            if (!isPaused) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawBase();
+                drawTowers();
+                drawEnemies();
+                moveEnemies();
+                attackTowers();
+                checkCollisions();
+                if (isFrozen && Date.now() > freezeEndTime) {
+                    isFrozen = false;
+                }
+                updateCooldowns();
+            }
+        }
+        
+        function drawBase() {
+            ctx.drawImage(baseImg, basePosition.x - 50, basePosition.y - 50, 100, 100); // Ajustar tamaño y posición
+            // Barra de vida de la base
+            ctx.fillStyle = 'black';
+            ctx.fillRect(basePosition.x - 50, basePosition.y + 60, 100, 10);
+            ctx.fillStyle = 'red';
+            ctx.fillRect(basePosition.x - 50, basePosition.y + 60, 100 * (baseHealth / 3), 10);
+        }
+        
+        function drawTowers() {
+            towers.forEach(tower => {
+                if (tower.type === 'attack') {
+                    ctx.drawImage(attackTowerImg, tower.x - 30, tower.y - 30, 60, 60); // Ajustar tamaño
+                    ctx.strokeStyle = 'cyan';
+                    ctx.beginPath();
+                    ctx.arc(tower.x, tower.y, towerRange, 0, Math.PI * 2);
+                    ctx.stroke();
+                } else if (tower.type === 'defense') {
+                    ctx.drawImage(defenseTowerImg, tower.x - 25, tower.y - 25, defenseTowerSize, defenseTowerSize); // Ajustar tamaño
+                }
+                
+                // Barra de vida de la torre
+                ctx.fillStyle = 'black';
+                ctx.fillRect(tower.x - (tower.type === 'attack' ? towerRadius : defenseTowerSize) / 2, 
+                             tower.y + (tower.type === 'attack' ? towerRadius : defenseTowerSize) / 2 + 10, 
+                             (tower.type === 'attack' ? towerRadius : defenseTowerSize), 
+                             5);
+                ctx.fillStyle = 'red';
+                ctx.fillRect(tower.x - (tower.type === 'attack' ? towerRadius : defenseTowerSize) / 2, 
+                             tower.y + (tower.type === 'attack' ? towerRadius : defenseTowerSize) / 2 + 10, 
+                             (tower.type === 'attack' ? towerRadius : defenseTowerSize) * (1 - (tower.health / (tower.type === 'attack' ? towerMaxHealth : defenseTowerMaxHealth))), 
+                             5);
+            });
+        }
+        
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                ctx.drawImage(enemyImg, enemy.x - enemyRadius, enemy.y - enemyRadius, enemyRadius * 2, enemyRadius * 2);
+            });
+        }
+        
+        function spawnEnemy() {
+            enemies.push({ x: 0, y: Math.random() * canvas.height });
+        }
+        
+        function moveEnemies() {
+            if (!isFrozen) {
+                enemies.forEach(enemy => {
+                    const angle = Math.atan2(basePosition.y - enemy.y, basePosition.x - enemy.x);
+                    enemy.x += enemySpeed * Math.cos(angle);
+                    enemy.y += enemySpeed * Math.sin(angle);
+                });
+            }
+        }
+        
+        function attackTowers() {
+            enemies.forEach((enemy, enemyIndex) => {
+                towers.forEach((tower, towerIndex) => {
+                    const dx = enemy.x - tower.x;
+                    const dy = enemy.y - tower.y;
+                    let distance;
+                    if (tower.type === 'attack') {
+                        distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance < towerRadius + enemyRadius) {
+                            tower.health -= enemyDamage;
+                            if (tower.health <= 0) {
+                                towers.splice(towerIndex, 1);
+                            }
+                        }
+                    } else if (tower.type === 'defense') {
+                        distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance < defenseTowerSize / 2 + enemyRadius) {
+                            tower.health -= enemyDamage;
+                            if (tower.health <= 0) {
+                                towers.splice(towerIndex, 1);
+                            }
+                        }
+                    }
+                });
+            });
+        }
+        
+        function checkCollisions() {
+            enemies.forEach((enemy, enemyIndex) => {
+                if (enemy.x > canvas.width) {
+                    enemies.splice(enemyIndex, 1);
+                    baseHealth--; // Restar vida a la base
+                    if (baseHealth <= 0) {
+                        alert('¡Has perdido!'); // Mensaje de pérdida
+                        clearInterval(interval);
+                        clearInterval(enemySpawnInterval);
+                    }
+                } else {
+                    towers.forEach((tower, towerIndex) => {
+                        const dx = enemy.x - tower.x;
+                        const dy = enemy.y - tower.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance < towerRadius + enemyRadius || (tower.type === 'defense' && distance < defenseTowerSize / 2 + enemyRadius)) {
+                            enemies.splice(enemyIndex, 1);
+                            score += 10; // Incrementar la puntuación al eliminar un enemigo
+                            updateScore(); // Actualizar la puntuación en pantalla
+                        }
+                    });
+                }
+            });
+        }
+        
+        function increaseDifficulty() {
+            difficulty += 0.5; // Incrementar dificultad
+            enemySpeed = Math.max(1, enemySpeed - 0.1); // Reducir la velocidad de los enemigos gradualmente
+            if (enemySpawnInterval) {
+                clearInterval(enemySpawnInterval);
+                enemySpawnInterval = setInterval(spawnEnemy, Math.max(500, 2000 - difficulty * 200)); // Disminuir el tiempo entre spawns
+            }
+        }
+
+        function pauseGame() {
+            isPaused = true;
+        }
+
+        function resumeGame() {
+            isPaused = false;
+        }
+
+        function updateScore() {
+            document.getElementById('score').innerText = `Puntuación: ${score}`;
+        }
+
+        function updateCooldowns() {
+            let cooldownsText = '';
+            if (healCooldown > 0) {
+                cooldownsText += `Curar Torres: ${healCooldown}s restantes<br>`;
+            }
+            if (freezeCooldown > 0) {
+                cooldownsText += `Congelar Enemigos: ${freezeCooldown}s restantes<br>`;
+            }
+            document.getElementById('cooldowns').innerHTML = cooldownsText;
+        }
+
+        function useAbility() {
+            if (selectedAbility === 'heal' && healCooldown <= 0) {
+                towers.forEach(tower => {
+                    if (tower.type === 'attack') {
+                        tower.health = Math.min(towerMaxHealth, tower.health + towerMaxHealth / 2); // Curar la mitad de la vida
+                    } else if (tower.type === 'defense') {
+                        tower.health = Math.min(defenseTowerMaxHealth, tower.health + defenseTowerMaxHealth / 2); // Curar la mitad de la vida
+                    }
+                });
+                baseHealth = Math.min(3, baseHealth + 1); // Restaurar una vida a la base
+                healCooldown = 20; // Cooldown de la habilidad de curar
+            } else if (selectedAbility === 'freeze' && freezeCooldown <= 0) {
+                isFrozen = true;
+                freezeEndTime = Date.now() + 8000; // Congelar enemigos durante 8 segundos
+                freezeCooldown = 15; // Cooldown de la habilidad de congelar
+            }
+            selectedAbility = null; // Deseleccionar habilidad después de usarla
+        }
+
+        // Ejecutar la habilidad seleccionada cuando se detecta una acción
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '1') { // Tecla 1 para usar la habilidad de curar
+                useAbility();
+            } else if (e.key === '2') { // Tecla 2 para usar la habilidad de congelar
+                useAbility();
+            }
+        });
+
+        // Deshabilitar la colocación de torres si el juego está pausado
+        document.addEventListener('click', (e) => {
+            if (isPaused) return;
+            placeTower(e);
+        });
+    </script>
+</body>
+</html>
